@@ -1,3 +1,4 @@
+# ------------------- Forcastv1.py (FULL CLEAN FILE) -------------------
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -8,42 +9,42 @@ import numpy as np
 
 from datetime import datetime
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-
-# ================== PAGE CONFIG ==================
+# ========== PAGE CONFIG ==========
 st.set_page_config(
-    page_title="AuroraQuant – ARIMA Stock Forecasting App",
+    page_title="AuroraQuant – ARIMA Stock Forecasting",
     layout="wide",
 )
 
-# ================== SIMPLE UI HEADER ==================
-st.title("📈 AuroraQuant – ARIMA Stock Forecasting App")
-st.write("Advanced ARIMA Forecasting + Indicators + Macro ARIMAX comparison.")
+st.title("📈 AuroraQuant – ARIMA Stock Forecasting")
+st.write("ARIMA-based price forecasting with basic indicators and error metrics.")
 
 
-# ================== HELPER FUNCTIONS ==================
+# ========== HELPER FUNCTIONS ==========
 
-def fetch_price_data(ticker, start, end, freq="Monthly"):
-    """Download historical stock prices from Yahoo Finance."""
+def fetch_price_data(ticker: str, start: str, end: str, freq: str = "Monthly") -> pd.Series:
+    """Download historical stock prices and return Close series."""
     df = yf.download(ticker, start=start, end=end, progress=False)
     if df.empty:
-        raise ValueError("Ticker data not found. Check symbol or timeframe.")
+        raise ValueError("No data downloaded – check ticker symbol or timeframe.")
     close = df["Close"].dropna()
     if freq == "Monthly":
         close = close.resample("M").last()
     return close
 
 
-def compute_rsi(series, period=14):
+def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Relative Strength Index."""
     delta = series.diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
     rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 
-def compute_macd(series, fast=12, slow=26, signal=9):
+def compute_macd(series: pd.Series, fast=12, slow=26, signal=9):
+    """MACD indicator."""
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
     macd = ema_fast - ema_slow
@@ -52,21 +53,22 @@ def compute_macd(series, fast=12, slow=26, signal=9):
     return macd, signal_line, hist
 
 
-def compute_volatility(series, freq="Monthly", window=6):
-    ret = series.pct_change()
+def compute_volatility(series: pd.Series, freq: str = "Monthly", window: int = 6) -> pd.Series:
+    """Rolling annualised volatility."""
+    returns = series.pct_change()
     if freq == "Monthly":
-        vol = ret.rolling(window).std() * np.sqrt(12)
+        vol = returns.rolling(window).std() * np.sqrt(12)
     else:
-        vol = ret.rolling(window).std() * np.sqrt(252)
+        vol = returns.rolling(window).std() * np.sqrt(252)
     return vol
 
 
-def metrics(y_true, y_pred):
+def metrics(y_true: pd.Series, y_pred: pd.Series):
     """Custom MAE, RMSE, MAPE (no sklearn)."""
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
     mae = np.mean(np.abs(y_true - y_pred))
-    rmse = np.sqrt(np.mean((y_true - y_pred)**2))
+    rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
     mask = y_true != 0
     if mask.any():
         mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
@@ -75,216 +77,190 @@ def metrics(y_true, y_pred):
     return mae, rmse, mape
 
 
-def auto_arima_search(series):
-    """Mini auto-ARIMA grid search."""
+def auto_arima_order(series: pd.Series):
+    """Tiny grid search for best (p,d,q) by AIC."""
     best_aic = np.inf
     best_order = (1, 1, 1)
-
-    for p in range(4):
-        for d in range(3):
-            for q in range(4):
+    for p in range(0, 4):
+        for d in range(0, 3):
+            for q in range(0, 4):
                 if p == d == q == 0:
                     continue
                 try:
-                    model = ARIMA(series, order=(p,d,q))
+                    model = ARIMA(series, order=(p, d, q))
                     res = model.fit()
                     if res.aic < best_aic:
                         best_aic = res.aic
-                        best_order = (p,d,q)
-                except:
+                        best_order = (p, d, q)
+                except Exception:
                     continue
     return best_order, best_aic
 
 
-def fetch_macro(start, end):
-    tickers = {
-        "NIFTY50": "^NSEI",
-        "CrudeOil": "CL=F",
-        "USDINR": "INR=X"
-    }
-    out = {}
-    for name, t in tickers.items():
-        df = yf.download(t, start=start, end=end, progress=False)
-        if not df.empty:
-            out[name] = df["Close"].dropna()
-    return out
+# ========== SIDEBAR CONTROLS ==========
 
-
-def align_macro(price, macro_dict):
-    df = pd.DataFrame({"Stock": price})
-    for name, s in macro_dict.items():
-        df[name] = s
-    df = df.dropna()
-    y = df["Stock"]
-    X = df.drop(columns=["Stock"])
-    return y, X
-
-
-# ================== SIDEBAR ==================
 st.sidebar.header("Configuration")
 
-ticker = st.sidebar.text_input("Stock ticker (NSE example: RELIANCE.NS)", value="RELIANCE.NS")
+ticker = st.sidebar.text_input("Stock ticker (e.g., RELIANCE.NS)", value="RELIANCE.NS")
 
-time_period = st.sidebar.selectbox(
-    "Select Timeframe",
+timeframe = st.sidebar.selectbox(
+    "Timeframe",
     ["2010–2018", "2021–2025", "Max Available"]
 )
 
 freq = st.sidebar.radio("Data Frequency", ["Monthly", "Daily"])
 
-auto_arima = st.sidebar.checkbox("Auto ARIMA (recommended)", value=True)
-
-if not auto_arima:
-    p = st.sidebar.slider("p", 0, 4, 1)
-    d = st.sidebar.slider("d", 0, 2, 1)
-    q = st.sidebar.slider("q", 0, 4, 1)
+auto_order = st.sidebar.checkbox("Auto ARIMA order (AIC based)", value=True)
+if not auto_order:
+    p = st.sidebar.slider("p (AR)", 0, 4, 1)
+    d = st.sidebar.slider("d (diff)", 0, 2, 1)
+    q = st.sidebar.slider("q (MA)", 0, 4, 1)
     manual_order = (p, d, q)
 else:
     manual_order = None
 
-use_arimax = st.sidebar.checkbox("Enable ARIMAX (Macro Exogenous)", value=False)
+forecast_horizon = st.sidebar.slider("Forecast horizon (months)", 6, 24, 12)
 
-forecast_horizon = st.sidebar.slider("Forecast Months", 6, 24, 12)
-
-run = st.sidebar.button("🚀 Run Forecast")
+run_btn = st.sidebar.button("🚀 Run ARIMA Forecast")
 
 
-# ================== MAIN APP ==================
+# ========== MAIN LOGIC ==========
 
-if not run:
-    st.info("Configure the options in the left sidebar and click **Run Forecast**.")
+if not run_btn:
+    st.info("Set your options in the sidebar and click **Run ARIMA Forecast**.")
 else:
     try:
-        # ------------------------ Timeframe mapping ------------------------
-        if time_period == "2010–2018":
+        # ----- Map timeframe -----
+        if timeframe == "2010–2018":
             start = "2010-01-01"
             end = "2019-01-01"
             test_year = 2018
-        elif time_period == "2021–2025":
+        elif timeframe == "2021–2025":
             start = "2021-01-01"
             end = "2026-01-01"
             test_year = 2025
-        else:
+        else:  # Max available
             start = "2000-01-01"
             end = datetime.today().strftime("%Y-%m-%d")
             test_year = datetime.today().year - 1
 
-        # ------------------------ Fetch Data ------------------------
+        # ----- Fetch data -----
         price = fetch_price_data(ticker, start, end, freq=freq)
 
-        st.subheader(f"📊 Historical Price – {ticker}")
-        st.line_chart(price)
+        st.subheader(f"Price History – {ticker}")
+        st.line_chart(price.rename("Close"))
 
-        # Indicators
+        # ----- Indicators -----
         rsi = compute_rsi(price)
         macd, macd_signal, macd_hist = compute_macd(price)
         vol = compute_volatility(price, freq=freq)
 
-        st.subheader("📌 Indicators")
-        c1, c2 = st.columns(2)
+        st.subheader("Indicators")
 
-        with c1:
+        col1, col2 = st.columns(2)
+        with col1:
             st.write("RSI")
-            st.line_chart(rsi)
-        with c2:
+            st.line_chart(rsi.rename("RSI"))
+
+        with col2:
             st.write("MACD")
-            st.line_chart(pd.DataFrame({"MACD": macd, "Signal": macd_signal}))
+            macd_df = pd.DataFrame({
+                "MACD": macd,
+                "Signal": macd_signal
+            })
+            st.line_chart(macd_df)
 
-        st.write("Volatility")
-        st.line_chart(vol)
+        st.write("Volatility (Annualised)")
+        st.line_chart(vol.rename("Volatility"))
 
-        # ------------------------ Train/Test Split ------------------------
+        # ----- Train/Test split -----
         train = price[price.index < f"{test_year}-01-01"]
         test = price[price.index >= f"{test_year}-01-01"]
 
-        # ------------------------ ARIMA Order ------------------------
-        if auto_arima:
-            order, aic = auto_arima_search(train)
+        if len(train) < 20:
+            st.warning("Not enough data for ARIMA in this timeframe. Try 'Max Available'.")
         else:
-            order = manual_order
-
-        st.subheader(f"🔢 ARIMA Order Selected: {order}")
-
-        # ------------------------ Train ARIMA ------------------------
-        model_train = ARIMA(train, order=order)
-        res_train = model_train.fit()
-
-        fc_test_res = res_train.get_forecast(steps=len(test))
-        fc_test = fc_test_res.predicted_mean
-
-        # ------------------------ Train Full Model ------------------------
-        model_full = ARIMA(price, order=order)
-        res_full = model_full.fit()
-
-        fc_future_res = res_full.get_forecast(steps=forecast_horizon)
-        fc_future = fc_future_res.predicted_mean
-
-        # Make future index
-        last_date = price.index[-1]
-        if freq == "Monthly":
-            future_index = pd.date_range(last_date + pd.offsets.MonthEnd(1), periods=forecast_horizon, freq="M")
-        else:
-            future_index = pd.date_range(last_date + pd.offsets.Day(1), periods=forecast_horizon, freq="D")
-
-        fc_future.index = future_index
-
-        # ------------------------ Display ARIMA Forecast ------------------------
-        st.subheader("🔮 ARIMA Forecast vs Actual Test Year")
-        df_test_plot = pd.DataFrame({
-            "Train": train,
-            "Actual (Test)": test,
-            "Forecast (Test)": fc_test
-        })
-        st.line_chart(df_test_plot)
-
-        # ------------------------ Metrics ------------------------
-        if len(test) > 0:
-            mae, rmse, mape = metrics(test, fc_test)
-            st.write("### 📏 Forecast Error Metrics (Test Year)")
-            st.metric("MAE", f"{mae:.2f}")
-            st.metric("RMSE", f"{rmse:.2f}")
-            st.metric("MAPE (%)", f"{mape:.2f}")
-
-        # ------------------------ Future Path ------------------------
-        st.subheader("🚀 Future Forecast")
-        df_future_plot = pd.concat([price.rename("Historical"), fc_future.rename("Forecast")], axis=0)
-        st.line_chart(df_future_plot)
-
-        # ------------------------ Macro ARIMAX ------------------------
-        if use_arimax:
-            st.subheader("🌐 ARIMAX (Macro Exogenous Variables)")
-            macro_data = fetch_macro(start, end)
-
-            if macro_data:
-                y, X = align_macro(price, macro_data)
-                y_train = y[y.index < f"{test_year}-01-01"]
-                y_test = y[y.index >= f"{test_year}-01-01"]
-                X_train = X.loc[y_train.index]
-                X_test = X.loc[y_test.index]
-
-                if len(y_train) > 10:
-                    arimax = SARIMAX(y_train, exog=X_train, order=order)
-                    arimax_res = arimax.fit()
-
-                    arimax_fc = arimax_res.predict(
-                        start=y_test.index[0],
-                        end=y_test.index[-1],
-                        exog=X_test
-                    )
-
-                    df_compare = pd.DataFrame({
-                        "Actual": y_test,
-                        "ARIMA": fc_test.loc[y_test.index],
-                        "ARIMAX": arimax_fc
-                    })
-
-                    st.line_chart(df_compare)
-
-                else:
-                    st.warning("Not enough aligned macro data for ARIMAX.")
-
+            # ----- Choose ARIMA order -----
+            if auto_order:
+                order, best_aic = auto_arima_order(train)
+                st.subheader(f"Selected ARIMA Order: {order} (best AIC = {best_aic:.2f})")
             else:
-                st.warning("Macro data unavailable.")
+                order = manual_order
+                st.subheader(f"Using manual ARIMA Order: {order}")
+
+            # ----- Fit ARIMA on train + forecast test -----
+            model_train = ARIMA(train, order=order)
+            res_train = model_train.fit()
+            fc_test_res = res_train.get_forecast(steps=len(test))
+            fc_test = fc_test_res.predicted_mean
+
+            # ----- Metrics -----
+            if len(test) > 0:
+                mae, rmse, mape = metrics(test, fc_test)
+            else:
+                mae = rmse = mape = np.nan
+
+            # ----- Fit ARIMA on full data + forecast future -----
+            model_full = ARIMA(price, order=order)
+            res_full = model_full.fit()
+            fc_future_res = res_full.get_forecast(steps=forecast_horizon)
+            fc_future = fc_future_res.predicted_mean
+
+            last_date = price.index[-1]
+            if freq == "Monthly":
+                future_index = pd.date_range(last_date + pd.offsets.MonthEnd(1),
+                                             periods=forecast_horizon, freq="M")
+            else:
+                future_index = pd.date_range(last_date + pd.offsets.Day(1),
+                                             periods=forecast_horizon, freq="D")
+            fc_future.index = future_index
+
+            # ----- Plot train/test/forecast -----
+            st.subheader("ARIMA – Train vs Test Forecast")
+            df_test_plot = pd.DataFrame({
+                "Train": train,
+                "Actual (Test)": test,
+                "Forecast (Test)": fc_test
+            })
+            st.line_chart(df_test_plot)
+
+            st.subheader("Forecast Error Metrics (Test Year)")
+            cmae, crmse, cmape = st.columns(3)
+            with cmae:
+                st.metric("MAE", f"{mae:.2f}")
+            with crmse:
+                st.metric("RMSE", f"{rmse:.2f}")
+            with cmape:
+                st.metric("MAPE (%)", "N/A" if np.isnan(mape) else f"{mape:.2f}")
+
+            # ----- Future path -----
+            st.subheader("Future Forecast Path")
+            df_future_plot = pd.concat(
+                [price.rename("Historical"), fc_future.rename("Forecast")],
+                axis=0
+            )
+            st.line_chart(df_future_plot)
+
+            # ----- Downloads -----
+            hist_df = price.to_frame(name="Close")
+            csv_hist = hist_df.to_csv().encode("utf-8")
+            st.download_button(
+                "⬇️ Download historical data (CSV)",
+                csv_hist,
+                file_name=f"{ticker}_historical.csv",
+                mime="text/csv"
+            )
+
+            fc_df = fc_future.to_frame(name="Forecast")
+            csv_fc = fc_df.to_csv().encode("utf-8")
+            st.download_button(
+                "⬇️ Download forecast data (CSV)",
+                csv_fc,
+                file_name=f"{ticker}_forecast.csv",
+                mime="text/csv"
+            )
 
     except Exception as e:
         st.error(f"Error: {e}")
+        st.info("Check ticker, timeframe, or try switching Monthly/Daily.")
+# ------------------- END FILE -------------------
