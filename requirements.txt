@@ -1,6 +1,8 @@
-streamlit
-yfinance
-pandas
-numpy
-matplotlib
-statsmodels
+streamlit==1.38.0
+yfinance==0.2.40
+pandas==2.2.2
+numpy==1.26.4
+matplotlib==3.8.4
+statsmodels==0.14.2
+scipy==1.12.0
+pytz
